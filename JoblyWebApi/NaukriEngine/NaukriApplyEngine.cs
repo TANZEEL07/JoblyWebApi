@@ -17,7 +17,7 @@ public class NaukriApplyEngine
         _userId = userId;
     }
 
-    public void Run(string role, string location, string skills)
+    public async void Run(string role, string location, string skills)
     {
         var options = new ChromeOptions();
         options.AddArgument("--window-size=1920,1080");
@@ -55,6 +55,8 @@ public class NaukriApplyEngine
             {
                 if (appliedCount >= 5) break;
 
+                
+
                 try
                 {
                     var tab = driver.FindElements(By.CssSelector($"div.tab-wrapper#{tabId}")).FirstOrDefault();
@@ -66,124 +68,21 @@ public class NaukriApplyEngine
 
                         var jobs = driver.FindElements(By.CssSelector("article.jobTuple"));
                         Console.WriteLine($"🔍 Found {jobs.Count} jobs in '{tabId}'");
+                        string originalWindow = driver.CurrentWindowHandle;
 
-                        foreach (var job in jobs)
+                        for (int i = 0; i < jobs.Count; i++)
                         {
-                            if (appliedCount >= 5) break;
+                            var job = jobs[i];
 
-                            bool hasCheckbox = job.FindElements(By.CssSelector(".tuple-check-box i.naukicon-ot-checkbox")).Any();
-                            if (!hasCheckbox)
-                            {
-                                Console.WriteLine("⚠️ Skipping job without checkbox");
-                                continue;
-                            }
+                            await ApplyJob(job, driver, wait);
 
-                            try
-                            {
-                                var titleElem = job.FindElement(By.CssSelector("p.title"));
-                                string title = titleElem.Text;
-                                string company = job.FindElement(By.CssSelector("span.companyWrapper span[title]"))?.Text ?? "";
-                                string loc = job.FindElement(By.CssSelector("li.location span"))?.Text ?? "";
-
-                                titleElem.Click();
-                                Console.WriteLine($"🔗 Opened job: {title}");
-                                Thread.Sleep(5000);
-
-                                try
-                                {
-                                    string originalWindow = driver.CurrentWindowHandle;
-                                    wait.Until(driver => driver.WindowHandles.Count > 1);
-
-                                    foreach (var window in driver.WindowHandles)
-                                    {
-                                        if (window != originalWindow)
-                                        {
-                                            driver.SwitchTo().Window(window);
-                                            Console.WriteLine("🪟 Switched to new job detail window/tab");
-                                            break;
-                                        }
-                                    }
-
-                                    wait.Until(ExpectedConditions.ElementExists(By.Id("job_header")));
-
-                                    // Optional: dump the DOM to inspect
-                                    File.WriteAllText($"debug_dom_{DateTime.Now:HHmmss}.html", driver.PageSource);
-
-                                    // Wait for Apply button using XPath
-                                    var applyBtn = wait.Until(ExpectedConditions.ElementToBeClickable(By.XPath("//button[@id='apply-button']")));
-                                    Console.WriteLine("✅ Found Apply button");
-
-                                    // 🎯 Scroll it into view smoothly
-                                    ((IJavaScriptExecutor)driver).ExecuteScript("arguments[0].scrollIntoView({block: 'center'});", applyBtn);
-                                    Thread.Sleep(500);
-
-                                    bool clicked = false;
-                                    for (int i = 0; i < 2; i++)  // Try normal and JS fallback
-                                    {
-                                        try
-                                        {
-                                            applyBtn.Click();
-                                            clicked = true;
-                                            Console.WriteLine("✅ Apply clicked (normal)");
-                                            break;
-                                        }
-                                        catch (Exception clickEx)
-                                        {
-                                            Console.WriteLine($"⚠️ Click failed: {clickEx.Message}, trying JS click...");
-                                            applyBtn = driver.FindElement(By.XPath("//button[contains(@class,'apply-button')]")); // Re-locate (stale fix)
-                                            ((IJavaScriptExecutor)driver).ExecuteScript("arguments[0].click();", applyBtn);
-                                            clicked = true;
-                                            Console.WriteLine("✅ Apply clicked (JS fallback)");
-                                            break;
-                                        }
-                                    }
-
-                                    if (!clicked)
-                                    {
-                                        Console.WriteLine("❌ Failed to click Apply button.");
-                                        continue;
-                                    }
-
-                                    Thread.Sleep(2000);
-
-                                    new AppliedJobRepository().Save(new AppliedJob
-                                    {
-                                        UserId = _userId,
-                                        JobTitle = title,
-                                        Company = company,
-                                        Location = loc,
-                                        AppliedAt = DateTime.Now
-                                    });
-
-                                    appliedCount++;
-                                    Console.WriteLine($"💾 Applied #{appliedCount}: {title}");
-                                }
-                                catch (Exception exApply)
-                                {
-                                    Console.WriteLine("❌ Apply Click Failed: " + exApply.Message);
-                                    string path = Path.Combine(Directory.GetCurrentDirectory(), $"error_apply_click_{DateTime.Now:HHmmss}.png");
-                                    ((ITakesScreenshot)driver).GetScreenshot().SaveAsFile(path);
-                                    Console.WriteLine("📸 Screenshot saved: " + path);
-                                }
-
-                                try
-                                {
-                                    driver.Navigate().Back();
-                                    Thread.Sleep(3000);
-                                }
-                                catch
-                                {
-                                    Console.WriteLine("⚠️ Failed to go back. Refreshing...");
-                                    driver.Navigate().Refresh();
-                                    Thread.Sleep(5000);
-                                }
-                            }
-                            catch (Exception exJob)
-                            {
-                                Console.WriteLine("❌ Job processing error: " + exJob.Message);
-                                try { driver.Navigate().Back(); Thread.Sleep(3000); } catch { }
-                            }
+                            // After ApplyJob completes, you should be back to original window
+                            driver.SwitchTo().Window(originalWindow);
+                            Thread.Sleep(1000);  // small pause if needed
+                            if (i == 5) break;
                         }
+
+                        //await Task.WhenAll(tasks);
                     }
                 }
                 catch (Exception exTab)
@@ -203,4 +102,83 @@ public class NaukriApplyEngine
             driver.Quit();
         }
     }
+
+    public async Task ApplyJob(IWebElement job, ChromeDriver driver, WebDriverWait wait)
+    {
+        try
+        {
+            bool hasCheckbox = job.FindElements(By.CssSelector(".tuple-check-box i.naukicon-ot-checkbox")).Any();
+            if (!hasCheckbox)
+            {
+                Console.WriteLine("⚠️ Skipping job without checkbox");
+                return;
+            }
+
+            var titleElem = job.FindElement(By.CssSelector("p.title"));
+            string title = titleElem.Text;
+            string company = job.FindElement(By.CssSelector("span.companyWrapper span[title]"))?.Text ?? "";
+            string loc = job.FindElement(By.CssSelector("li.location span"))?.Text ?? "";
+
+            titleElem.Click();
+            Console.WriteLine($"🔗 Opened job: {title}");
+            await Task.Delay(5000);
+
+            string originalWindow = driver.CurrentWindowHandle;
+            wait.Until(driver => driver.WindowHandles.Count > 1);
+
+            foreach (var window in driver.WindowHandles)
+            {
+                if (window != originalWindow)
+                {
+                    driver.SwitchTo().Window(window);
+                    Console.WriteLine("🪟 Switched to job tab");
+                    break;
+                }
+            }
+
+            wait.Until(ExpectedConditions.ElementExists(By.Id("job_header")));
+
+            var applyButtons = driver.FindElements(By.Id("apply-button"));
+            if (applyButtons.Count == 0)
+            {
+                Console.WriteLine("⚠️ Apply button not found, skipping.");
+                return;
+            }
+
+            var applyBtn = applyButtons[0];
+
+            // Optionally check if clickable
+            if (!applyBtn.Displayed || !applyBtn.Enabled)
+            {
+                Console.WriteLine("⚠️ Apply button is not clickable, skipping.");
+                return;
+            }
+            ((IJavaScriptExecutor)driver).ExecuteScript("arguments[0].scrollIntoView({block: 'center'});", applyBtn);
+            await Task.Delay(500);
+
+            applyBtn.Click();
+            Console.WriteLine("✅ Clicked Apply");
+
+            await Task.Delay(2000);
+
+            new AppliedJobRepository().Save(new AppliedJob
+            {
+                UserId = _userId,
+                JobTitle = title,
+                Company = company,
+                Location = loc,
+                AppliedAt = DateTime.Now
+            });
+
+            Console.WriteLine($"💾 Applied to: {title}");
+
+            driver.Close(); // Close the job tab
+            driver.SwitchTo().Window(originalWindow);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine("❌ Error in ApplyJob: " + ex.Message);
+        }
+    }
+
 }

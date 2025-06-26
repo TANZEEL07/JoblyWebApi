@@ -8,10 +8,11 @@ using System.Security.Claims;
 public class AutoApplyController : ControllerBase
 {
     [HttpPost("naukri")]
+    [AllowAnonymous]
     public IActionResult Apply()
     {
         int userId = int.Parse(User.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? "0");
-
+        userId = 1;
         // Normally you fetch from DB
         var filters = new JobFilterRepository().GetByUserId(userId).FirstOrDefault();
         if (filters == null) return BadRequest("No filters found");

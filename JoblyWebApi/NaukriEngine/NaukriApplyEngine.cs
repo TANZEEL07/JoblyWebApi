@@ -91,16 +91,29 @@ public class NaukriApplyEngine
 
                                 try
                                 {
-                                    ((IJavaScriptExecutor)driver).ExecuteScript("window.scrollTo(0, document.body.scrollHeight);");
-                                    Thread.Sleep(2000);
+                                    string originalWindow = driver.CurrentWindowHandle;
+                                    wait.Until(driver => driver.WindowHandles.Count > 1);
 
-                                    // Wait until Apply button is present and enabled
-                                    IWebElement applyBtn = wait.Until(driver =>
+                                    foreach (var window in driver.WindowHandles)
                                     {
-                                        var btn = driver.FindElement(By.XPath("//button[contains(@class,'apply-button')]"));
-                                        return (btn.Displayed && btn.Enabled) ? btn : null;
-                                    });
+                                        if (window != originalWindow)
+                                        {
+                                            driver.SwitchTo().Window(window);
+                                            Console.WriteLine("🪟 Switched to new job detail window/tab");
+                                            break;
+                                        }
+                                    }
 
+                                    wait.Until(ExpectedConditions.ElementExists(By.Id("job_header")));
+
+                                    // Optional: dump the DOM to inspect
+                                    File.WriteAllText($"debug_dom_{DateTime.Now:HHmmss}.html", driver.PageSource);
+
+                                    // Wait for Apply button using XPath
+                                    var applyBtn = wait.Until(ExpectedConditions.ElementToBeClickable(By.XPath("//button[@id='apply-button']")));
+                                    Console.WriteLine("✅ Found Apply button");
+
+                                    // 🎯 Scroll it into view smoothly
                                     ((IJavaScriptExecutor)driver).ExecuteScript("arguments[0].scrollIntoView({block: 'center'});", applyBtn);
                                     Thread.Sleep(500);
 

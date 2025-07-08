@@ -142,37 +142,130 @@ public class NaukriApplyEngine
             if (applyButtons.Count == 0)
             {
                 Console.WriteLine("⚠️ Apply button not found, skipping.");
+                driver.Close();
+                driver.SwitchTo().Window(originalWindow);
                 return;
             }
 
             var applyBtn = applyButtons[0];
 
-            // Optionally check if clickable
             if (!applyBtn.Displayed || !applyBtn.Enabled)
             {
                 Console.WriteLine("⚠️ Apply button is not clickable, skipping.");
+                driver.Close();
+                driver.SwitchTo().Window(originalWindow);
                 return;
             }
+
             ((IJavaScriptExecutor)driver).ExecuteScript("arguments[0].scrollIntoView({block: 'center'});", applyBtn);
             await Task.Delay(500);
 
             applyBtn.Click();
             Console.WriteLine("✅ Clicked Apply");
 
-            await Task.Delay(2000);
+            await Task.Delay(3000);
 
-            new AppliedJobRepository().Save(new AppliedJob
+            // Scenario 1: Check if success message appears
+            bool successMessageFound = false;
+            try
             {
-                UserId = _userId,
-                JobTitle = title,
-                Company = company,
-                Location = loc,
-                AppliedAt = DateTime.Now
-            });
+                //successMessageFound = wait.Until(driver =>
+                //    driver.PageSource.Contains("applied successfully") ||
+                //    driver.FindElements(By.XPath("//*[contains(text(), 'applied successfully')]")).Any()
+                //);
 
-            Console.WriteLine($"💾 Applied to: {title}");
+                //if (successMessageFound)
+                //{
+                //    Console.WriteLine("🎉 Job applied successfully message found.");
+                //}
+            }
+            catch { /* Ignored if not found */ }
 
-            driver.Close(); // Close the job tab
+            // Scenario 2: Check for slide form (naukLogoMsg)
+            bool formFound = false;
+            try
+            {
+                formFound = wait.Until(driver =>
+                    driver.FindElements(By.CssSelector("li.botLogo.chatbot_ListItem .naukLogoMsg")).Any()
+                );
+
+                if (formFound)
+                {
+
+                    Console.WriteLine("📝 Slide form found — manual input required.");
+
+                    // Extract all question spans
+                    var questionElements = driver.FindElements(By.CssSelector("li.botItem.chatbot_ListItem .botMsg span"));
+
+                    if (questionElements.Count > 0)
+                    {
+                        Console.WriteLine("📋 Form Questions:");
+                        foreach (var elem in questionElements)
+                        {
+                            string question = elem.Text.Trim();
+                            if (!string.IsNullOrEmpty(question))
+                            {
+                                try
+                                {
+                                    Console.WriteLine(question);
+                                    var inputBox = driver.FindElement(By.CssSelector("div.footerInputBoxWrapper div.textArea[contenteditable='true']"));
+
+                                    if (inputBox != null)
+                                    {
+                                        // Step 2: Click/focus input box
+                                        inputBox.Click();
+                                        await Task.Delay(500);
+
+                                        // Step 3: Type "Yes" using JavaScript
+                                        ((IJavaScriptExecutor)driver).ExecuteScript("arguments[0].innerText = 'Yes';", inputBox);
+                                        Console.WriteLine("📝 Typed 'Yes' into chatbot input");
+
+                                        var saveButton = driver.FindElement(By.CssSelector("div.sendMsg"));
+
+                                        if (saveButton != null && saveButton.Displayed && saveButton.Enabled)
+                                        {
+                                            saveButton.Click();
+                                            Console.WriteLine("💾 Clicked 'Save' button to submit answer");
+                                        }
+                                        Console.WriteLine("📩 Pressed Enter to submit 'Yes'");
+                                    }
+                                }
+                                catch { }
+                            }
+                        }
+                    }
+                    else
+                    {
+                        Console.WriteLine("⚠️ No questions found inside slide form.");
+                    }
+                }
+            }
+            catch { /* Ignored if not found */ }
+
+            // Act based on what we found
+            if (successMessageFound)
+            {
+                new AppliedJobRepository().Save(new AppliedJob
+                {
+                    UserId = _userId,
+                    JobTitle = title,
+                    Company = company,
+                    Location = loc,
+                    AppliedAt = DateTime.Now
+                });
+
+                Console.WriteLine($"💾 Job saved as applied: {title}");
+            }
+            else if (formFound)
+            {
+                Console.WriteLine("⚠️ Job requires manual form submission. Skipping automated save.");
+            }
+            else
+            {
+                Console.WriteLine("❌ Neither success message nor form found. Possibly error page.");
+            }
+
+            driver.Close();
             driver.SwitchTo().Window(originalWindow);
         }
         catch (Exception ex)

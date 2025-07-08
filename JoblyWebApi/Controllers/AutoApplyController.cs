@@ -1,5 +1,9 @@
 ﻿using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using OpenQA.Selenium;
+using OpenQA.Selenium.Chrome;
+using OpenQA.Selenium.Support.UI;
+using SeleniumExtras.WaitHelpers;
 using System.Security.Claims;
 
 [Authorize]
@@ -18,12 +22,14 @@ public class AutoApplyController : ControllerBase
         if (filters == null) return BadRequest("No filters found");
 
         // Dummy login (replace with actual DB stored login)
-        string email = "sayedawesali190@gmail.com";
-        string password = "awes@123";
+       
+            string email = "tanzebaig@gmail.com";
+            string password = "Pass@8588";
 
-        var engine = new NaukriApplyEngine(email, password, userId);
-        engine.Run(filters.Role, filters.Location, filters.Skills);
+            var engine = new NaukriApplyEngine(email, password, userId);
+            engine.Run(filters.Role, filters.Location, filters.Skills);
 
+       
         return Ok("Naukri auto-apply completed");
     }
 }

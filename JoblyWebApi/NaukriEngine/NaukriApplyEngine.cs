@@ -1,8 +1,12 @@
 ﻿using JoblyWebApi.Repositories;
+using JoblyWebApi.Services;
+using Newtonsoft.Json;
 using OpenQA.Selenium;
 using OpenQA.Selenium.Chrome;
 using OpenQA.Selenium.Support.UI;
+using RestSharp;
 using SeleniumExtras.WaitHelpers;
+using UglyToad.PdfPig;
 
 public class NaukriApplyEngine
 {
@@ -23,23 +27,25 @@ public class NaukriApplyEngine
         options.AddArgument("--window-size=1920,1080");
 
         using var driver = new ChromeDriver(options);
-        var wait = new WebDriverWait(driver, TimeSpan.FromSeconds(60));
+        var wait = new WebDriverWait(driver, TimeSpan.FromSeconds(30));
 
         try
         {
             // Login
             driver.Navigate().GoToUrl("https://login.naukri.com/nLogin/Login.php");
-            Thread.Sleep(3000);
+            ConfigManager.Delay5();
 
             wait.Until(ExpectedConditions.ElementIsVisible(By.Id("usernameField"))).SendKeys(_email);
+            ConfigManager.Delay5();
             wait.Until(ExpectedConditions.ElementIsVisible(By.Id("passwordField"))).SendKeys(_password);
+            ConfigManager.Delay5();
             wait.Until(ExpectedConditions.ElementToBeClickable(By.CssSelector("button[type='submit']"))).Click();
             Console.WriteLine("✅ Logged in successfully");
-            Thread.Sleep(5000);
+            ConfigManager.Delay5();
 
             // Go to Homepage -> View All Jobs
             driver.Navigate().GoToUrl("https://www.naukri.com/mnjuser/homepage");
-            Thread.Sleep(4000);
+            ConfigManager.Delay5();
             var viewAll = driver.FindElements(By.CssSelector("a.view-all-link")).FirstOrDefault();
             if (viewAll != null)
             {
@@ -55,7 +61,7 @@ public class NaukriApplyEngine
             {
                 if (appliedCount >= 5) break;
 
-                
+
 
                 try
                 {
@@ -118,7 +124,7 @@ public class NaukriApplyEngine
             string title = titleElem.Text;
             string company = job.FindElement(By.CssSelector("span.companyWrapper span[title]"))?.Text ?? "";
             string loc = job.FindElement(By.CssSelector("li.location span"))?.Text ?? "";
-
+            ConfigManager.Delay5();
             titleElem.Click();
             Console.WriteLine($"🔗 Opened job: {title}");
             await Task.Delay(5000);
@@ -130,6 +136,7 @@ public class NaukriApplyEngine
             {
                 if (window != originalWindow)
                 {
+                    ConfigManager.Delay5();
                     driver.SwitchTo().Window(window);
                     Console.WriteLine("🪟 Switched to job tab");
                     break;
@@ -142,7 +149,9 @@ public class NaukriApplyEngine
             if (applyButtons.Count == 0)
             {
                 Console.WriteLine("⚠️ Apply button not found, skipping.");
+                ConfigManager.Delay5();
                 driver.Close();
+                ConfigManager.Delay5();
                 driver.SwitchTo().Window(originalWindow);
                 return;
             }
@@ -152,7 +161,9 @@ public class NaukriApplyEngine
             if (!applyBtn.Displayed || !applyBtn.Enabled)
             {
                 Console.WriteLine("⚠️ Apply button is not clickable, skipping.");
+                ConfigManager.Delay5();
                 driver.Close();
+                ConfigManager.Delay5();
                 driver.SwitchTo().Window(originalWindow);
                 return;
             }
@@ -191,61 +202,125 @@ public class NaukriApplyEngine
 
                 if (formFound)
                 {
-
                     Console.WriteLine("📝 Slide form found — manual input required.");
 
-                    // Extract all question spans
-                    var questionElements = driver.FindElements(By.CssSelector("li.botItem.chatbot_ListItem .botMsg span"));
-
-                    if (questionElements.Count > 0)
+                    int questionIndex = 0;
+                    while (true)
                     {
-                        Console.WriteLine("📋 Form Questions:");
-                        foreach (var elem in questionElements)
+                        try
                         {
-                            string question = elem.Text.Trim();
-                            if (!string.IsNullOrEmpty(question))
+                            var questionElements = driver.FindElements(By.CssSelector("li.botItem.chatbot_ListItem .botMsg span"));
+                            if (questionElements.Count <= questionIndex)
                             {
-                                try
+                                Console.WriteLine("✅ No more questions.");
+                                break;
+                            }
+
+                            var elem = questionElements[questionIndex];
+                            string question = elem.Text.Trim();
+                            string questionLower = question.ToLower();
+
+                            // ✅ Stop if final message received
+                            if (questionLower.Contains("thank you for your response"))
+                            {
+                                Console.WriteLine("🛑 Final message received: Stopping question-answer loop.");
+                                break;
+                            }
+
+                            // ⛔ Skip greeting/instruction messages
+                            string[] skipPhrases = {
+                                "thank you for showing interest",
+                                "kindly answer all the recruiter's questions",
+                                "successfully apply for the job",
+                                "hi Tanzeel"
+                                    };
+
+                            if (!string.IsNullOrEmpty(question) &&
+                                skipPhrases.Any(p => questionLower.Contains(p)))
+                            {
+                                Console.WriteLine("↪️ Skipping greeting/instruction message");
+                                questionIndex++;
+                                continue;
+                            }
+
+                            // ✅ Process valid questions
+                            if (!string.IsNullOrEmpty(question) &&
+                                (question.EndsWith("?")))
+                            {
+                                Console.WriteLine($"❓ Question: {question}");
+                                var CheckAnswer = ResumeRepository.GetAnswerByQuestion(question);
+                                var answer = string.IsNullOrEmpty(CheckAnswer) ? await AskGroqAsync(question) :CheckAnswer;
+                                var ConsoleValue = string.IsNullOrEmpty(CheckAnswer) ? $"answer : {answer} is from API" : $"answer : {answer} is from DB";
+                                Console.WriteLine(ConsoleValue);
+                                Console.WriteLine($"📝 Answered: {answer}");
+                                ResumeRepository.SaveQuestionAnswer(1, question, answer);
+                                var inputBox = driver.FindElement(By.CssSelector("div.footerInputBoxWrapper div.textArea[contenteditable='true']"));
+
+                                string script = @"
+                                        const inputBox = arguments[0];
+                                        const text = arguments[1];
+                                        inputBox.innerText = text;
+
+                                        const event = new Event('input', { bubbles: true });
+                                        inputBox.dispatchEvent(event);
+
+                                        const evt = new Event('change', { bubbles: true });
+                                        inputBox.dispatchEvent(evt);
+                                    ";
+                                ((IJavaScriptExecutor)driver).ExecuteScript(script, inputBox, answer);
+                                await Task.Delay(5000);
+
+                                var optionLabels = driver.FindElements(By.CssSelector("div.ssrc__radio-btn-container label.ssrc__label"));
+
+                                bool matched = false;
+
+                                foreach (var label in optionLabels)
                                 {
-                                    Console.WriteLine(question);
-                                    var inputBox = driver.FindElement(By.CssSelector("div.footerInputBoxWrapper div.textArea[contenteditable='true']"));
-
-                                    if (inputBox != null)
+                                    string optionText = label.Text.Trim().ToLower();
+                                    if (optionText.Contains(answer.Trim().ToLower()))
                                     {
-                                        // Step 2: Click/focus input box
-                                        inputBox.Click();
-                                        await Task.Delay(500);
-
-                                        // Step 3: Type "Yes" using JavaScript
-                                        ((IJavaScriptExecutor)driver).ExecuteScript("arguments[0].innerText = 'Yes';", inputBox);
-                                        Console.WriteLine("📝 Typed 'Yes' into chatbot input");
-
-                                        var saveButton = driver.FindElement(By.CssSelector("div.sendMsg"));
-
-                                        if (saveButton != null && saveButton.Displayed && saveButton.Enabled)
-                                        {
-                                            saveButton.Click();
-                                            Console.WriteLine("💾 Clicked 'Save' button to submit answer");
-                                        }
-                                        Console.WriteLine("📩 Pressed Enter to submit 'Yes'");
+                                        ConfigManager.Delay5();
+                                        label.Click();  // Label pe click karna radio select kar dega
+                                        ConfigManager.Delay5();
+                                        Console.WriteLine($"✅ Selected MCQ option: {optionText}");
+                                        matched = true;
+                                        break;
                                     }
                                 }
-                                catch { }
+
+                                // Step 3: Agar koi match nahi mila toh fallback
+                                if (!matched && optionLabels.Count > 0)
+                                {
+                                    ConfigManager.Delay5();
+                                    optionLabels[0].Click();  // Default: first option
+                                    Console.WriteLine("⚠️ No exact match. Clicked first option as fallback.");
+                                }
+
+
+                                var saveButton = driver.FindElement(By.CssSelector("div.sendMsg"));
+                                ((IJavaScriptExecutor)driver).ExecuteScript("arguments[0].click();", saveButton);
+                                Console.WriteLine("💾 Clicked 'Save' button using JavaScript");
+
+                                await Task.Delay(5000);
                             }
+
+                            questionIndex++;
+                        }
+                        catch (Exception ex)
+                        {
+                            Console.WriteLine($"⚠️ Error while answering question: {ex.Message}");
+                            break;
                         }
                     }
-                    else
-                    {
-                        Console.WriteLine("⚠️ No questions found inside slide form.");
-                    }
                 }
+
             }
             catch { /* Ignored if not found */ }
 
             // Act based on what we found
             if (successMessageFound)
             {
-                new AppliedJobRepository().Save(new AppliedJob
+                await new AppliedJobRepository().Save(new AppliedJob
                 {
                     UserId = _userId,
                     JobTitle = title,
@@ -264,7 +339,7 @@ public class NaukriApplyEngine
             {
                 Console.WriteLine("❌ Neither success message nor form found. Possibly error page.");
             }
-
+            //  ConfigManager.Delay5();
             driver.Close();
             driver.SwitchTo().Window(originalWindow);
         }
@@ -272,6 +347,56 @@ public class NaukriApplyEngine
         {
             Console.WriteLine("❌ Error in ApplyJob: " + ex.Message);
         }
+    }
+    private static string _cachedResumeText = null;
+    static async Task<string> AskGroqAsync(string question)
+    {
+        if (_cachedResumeText == null)
+            _cachedResumeText = ExtractTextFromPdf("C:\\Users\\Tanzeel Baig\\Downloads\\TanzeelBaigReume.pdf");
+
+        var client = new RestClient("https://api.groq.com/openai/v1/chat/completions");
+        var request = new RestRequest("", Method.Post);
+        request.AddHeader("Authorization", $"Bearer 12345");
+        request.AddHeader("Content-Type", "application/json");
+
+        var payload = new
+        {
+            model = "llama3-8b-8192",
+            messages = new[] {
+            new { role = "system", content = "You are the person whose resume is provided. Answer each question in 2-4 words only. Do not use full sentences. Be direct and brief." },
+            new { role = "user", content = $"Resume:\n{_cachedResumeText}\n\nQuestion: {question}" }
+        },
+            temperature = 0.7
+        };
+
+        request.AddStringBody(JsonConvert.SerializeObject(payload), DataFormat.Json);
+
+        var response = await client.ExecuteAsync(request);
+
+        // Retry once if rate limited
+        if ((int)response.StatusCode == 429)
+        {
+            Console.WriteLine("⏳ Rate limited. Retrying in 7 seconds...");
+            await Task.Delay(7000);
+            return await AskGroqAsync(question);
+        }
+
+        if (!response.IsSuccessful)
+            return $"❌ Error: {response.StatusCode} - {response.Content}";
+
+        dynamic json = JsonConvert.DeserializeObject(response.Content);
+        return json?.choices?[0]?.message?.content?.ToString()?.Trim() ?? "❌ No answer found.";
+    }
+
+    static string ExtractTextFromPdf(string path)
+    {
+        using var document = PdfDocument.Open(path);
+        string fullText = "";
+        foreach (var page in document.GetPages())
+        {
+            fullText += page.Text + "\n";
+        }
+        return fullText;
     }
 
 }

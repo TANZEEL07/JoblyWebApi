@@ -4,7 +4,7 @@ namespace JoblyWebApi.Repositories
 {
    public class AppliedJobRepository
 {
-    public void Save(AppliedJob job)
+    public async Task Save(AppliedJob job)
     {
         using var conn = new SqlConnection(DbConnectionHelper.ConnectionString);
         conn.Open();

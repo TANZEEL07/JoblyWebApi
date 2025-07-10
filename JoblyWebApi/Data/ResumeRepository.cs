@@ -1,4 +1,5 @@
-﻿using System.Data.SqlClient;
+﻿using System.Data;
+using System.Data.SqlClient;
 
 public class ResumeRepository
 {
@@ -13,4 +14,39 @@ public class ResumeRepository
         cmd.Parameters.AddWithValue("@UploadedAt", DateTime.Now);
         cmd.ExecuteNonQuery();
     }
+
+    public static void SaveQuestionAnswer(int userId, string question, string answer)
+    {
+        using var conn = new SqlConnection(DbConnectionHelper.ConnectionString);
+        conn.Open();
+
+        using var cmd = new SqlCommand("InsertResumeQnA", conn);
+        cmd.CommandType = CommandType.StoredProcedure;
+
+        cmd.Parameters.AddWithValue("@Question", question);
+        cmd.Parameters.AddWithValue("@Answer", answer);
+        cmd.Parameters.AddWithValue("@UserId", userId);
+
+        cmd.ExecuteNonQuery();
+    }
+
+    public static string?  GetAnswerByQuestion(string question)
+    {
+        using var conn = new SqlConnection(DbConnectionHelper.ConnectionString);
+        conn.Open();
+
+        using var cmd = new SqlCommand("GetAnswerByQuestion", conn);
+        cmd.CommandType = CommandType.StoredProcedure;
+
+        cmd.Parameters.AddWithValue("@Question", question);
+
+        using var reader = cmd.ExecuteReader();
+        if (reader.Read())
+        {
+            return reader["Answer"]?.ToString();
+        }
+
+        return null; 
+    }
+
 }

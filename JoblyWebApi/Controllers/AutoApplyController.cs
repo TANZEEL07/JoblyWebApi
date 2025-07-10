@@ -1,4 +1,5 @@
-﻿using Microsoft.AspNetCore.Authorization;
+﻿using JoblyWebApi.Services;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using OpenQA.Selenium;
 using OpenQA.Selenium.Chrome;
@@ -22,7 +23,7 @@ public class AutoApplyController : ControllerBase
         if (filters == null) return BadRequest("No filters found");
 
         // Dummy login (replace with actual DB stored login)
-       
+        
             string email = "tanzebaig@gmail.com";
             string password = "Pass@8588";
 
